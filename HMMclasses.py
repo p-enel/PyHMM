@@ -472,6 +472,47 @@ class HMM_Poisson(HMM_base):
     """HMM model for multiple poisson observation sequences
     """
 
+    def _estimate_seq(self, sequence, fwdlattice, bwdlattice, emsprob, coeffs):
+        """Part of the Baum-Welch algorithm for a single sequence
+
+        Arguments:
+        sequence -- np.array<nemissions*nfeatures> - a sequence of emission
+        fwdlattice -- np.array<nemissions*nstates> - the forward variable lattice
+        bwdlattice -- np.array<nemissions*nstates> - the backward variable lattice
+        coeffs -- np.array<nemissions> - the scaling coefficients obtained with the forward variable
+
+        Returns:
+        xi_sum --
+        gamma_per_feature --
+        gamma_sum --
+        piseq --
+        """
+
+        # Estimation of transition matrix
+        fwdtmp = np.moveaxis(fwdlattice[:, :, None], 0, 2)
+        bwdtmp = np.swapaxes(bwdlattice[:, :, None], 0, 2)
+        Btmp = np.swapaxes(emsprob[:, :, None], 0, 2)
+
+        xi = fwdtmp[:, :, :-1] * bwdtmp[:, :, 1:] * \
+            self.A[:, :, None] * Btmp[:, :, 1:]
+        xi_sum = np.sum(xi, 2)
+
+        # Estimation of emission matrix
+        gamma = np.sum(xi, 1).T
+        # gamma = fwdlattice[:-1, :] * bwdlattice[:-1, :] / coeffs[:-1][:, None]
+        # posterior = gamma / gamma.sum(1, keepdims=True)
+        seq = sequence[:-1].astype(float).T
+
+        gamma_per_feature = np.dot(seq, gamma)
+        # gamma_sum = gamma.sum(0)
+        gamma_sum = gamma.sum(0)
+
+        # Estimation of the initial probabilities
+        # piseq = gamma[0, :][None, :]
+        piseq = gamma[0, :][None, :]
+
+        return xi_sum, gamma_per_feature, gamma_sum, piseq
+
     def _ems_prob(self, sequence):
         """Calculate the probability of each emission in a sequence given the transition probabilities
         Arguments:
@@ -480,12 +521,12 @@ class HMM_Poisson(HMM_base):
         Returns:
         emsprob -- float - the emission probability
         """
-        Bhash = str(self.B)
+        Bhash = self.B.tostring()
         emsprob = np.empty((sequence.shape[0], self.nstates))
         for iems, ems in enumerate(sequence):
             self.ems = ems[:, None]
             # the transpose is easier to read, it has no effect on the computation
-            emshash = str(self.ems.T)
+            emshash = self.ems.T.tostring()
             emsprob[iems] = self._ems_prob_single(Bhash, emshash)
         return emsprob
 
@@ -506,26 +547,10 @@ class HMM_Poisson(HMM_base):
         emsprob -- float - emission probability
         """
         # Using log space here to prevent underflow
-        tmp = np.log(np.exp(-self.B) * self.B**self.ems /
-                     self._vec_factorial(self.ems))
-        emsprob = np.exp(np.sum(tmp,
-                                axis=0,
-                                dtype=float,
-                                keepdims=True))
+        tmp = np.exp(-self.B) * self.B**self.ems /\
+            self._vec_factorial(self.ems)
+        emsprob = np.prod(tmp,
+                          axis=0,
+                          dtype=float,
+                          keepdims=True)
         return emsprob
-
-    def _estimate_B_seq(self, sequence, loggamma):
-        """Calculate the numerator of the B estimates for a single sequence
-
-        Arguments:
-        sequence -- <np.array nemissions*nfeatures> - a sequence of emissions
-        loggamma -- <np.array nemissions*nstates> - the logarithm of the gammas for each time step
-
-        Returns:
-        gammaperfeat -- np.array<nfeatures*nstates> - the sums of gammas for each feature
-        gammasum -- np.array<nstates> - the sum of all gammas for this sequence
-        """
-        logseq = np.log(sequence[:-1].astype(float)).T
-        gammaperfeat = np.exp(logdot(logseq, loggamma))
-        gammasum = np.exp(logvecsum(loggamma, 0))
-        return gammaperfeat, gammasum
