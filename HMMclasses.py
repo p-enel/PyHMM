@@ -197,6 +197,7 @@ class HMM_base(object):
         coeffs = np.zeros(T)
         fwdlattice[0, :] = self.pi * emsprob[0, :]
         coeffs[0] = 1 / np.sum(fwdlattice[0, :])
+        fwdlattice[0, :] *= coeffs[0]
         for t in range(1, T):
             fwdlattice[t, :] = np.dot(
                 fwdlattice[t - 1, :], self.A) * emsprob[t, :]
